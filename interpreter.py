@@ -12,6 +12,10 @@ ASSIGN = "ASSIGN"
 
 SEMICOLON = 'SEMICOLON'
 
+IF = 'IF'
+THEN = 'THEN'
+ELSE = 'ELSE'
+
 
 LT = "LT"    # <
 GT = "GT"    # >
@@ -19,6 +23,11 @@ LE = "LE"    # <=
 GE = "GE"    # >= 
 EQ = "EQ"    # ==
 NE = "NE"    # !=
+compare_map = {'LT' : '<', 'GT' : '>', 'LE' : '<=', 'GE' : '>=', 'EQ' : '==', 'NE' : '!='}
+
+AND = "AND"
+OR = "OR"
+NOT = "NOT"
 
 class Token:
     def __init__(self, _type, value=None):
@@ -83,6 +92,9 @@ def tokenize(expr):
             if i + 1 < len(expr) and expr[i+1] == '=':
                 tokens.append(Token(NE))
                 i += 2
+                continue
+            else:
+                raise ValueError("Unexpected '!'")
 
 
         # handling operations (+, -, *, /)
@@ -105,7 +117,25 @@ def tokenize(expr):
             while i < len(expr) and (expr[i].isalnum() or expr[i] == '_'):
                 name += expr[i]
                 i += 1
-            tokens.append(Token(NAME, name))
+            
+            # check if name is a logical keyword
+            if name == "and":
+                tokens.append(Token(AND))
+            elif name == "or":
+                tokens.append(Token(OR))
+            elif name == "not":
+                tokens.append(Token(NOT))
+            
+            # check if name is if-then-else keywords
+            if name == 'if':
+                tokens.append(Token(IF))
+            elif name == 'then':
+                tokens.append(Token(THEN))
+            elif name == 'else':
+                tokens.append(Token(ELSE))
+            
+            else:
+                tokens.append(Token(NAME, name))
             continue
 
         elif current == ';':
@@ -159,9 +189,22 @@ class CompareNode:
         self.left = left
         self.op = op
         self.right = right
+
     def __repr__(self):
-        return f"{self.left} {self.op} {self.right}"
+        return f"{self.left} {compare_map[self.op]} {self.right}"
         
+
+class IfNode:
+    def __init__(self, condition, then_branch, else_branch=None):
+        self.condition = condition
+        self.then_branch = then_branch
+        self.else_branch = else_branch
+    def __repr__(self):
+        if self.else_branch:
+            return f"(if {self.condition} then {self.then_branch} else {self.else_branch})"
+        return f"(if {self.condition} then {self.then_branch})"
+
+
 
 class Parser:
     def __init__(self, tokens):
@@ -205,6 +248,10 @@ class Parser:
     def statement(self):
         current = self.peek()
 
+        # handle if-else statement
+        if current and current.type == IF:
+            return self.if_statement()
+
         # handle assignment
         if current and current.type == NAME:
             name_token = self.eat()
@@ -216,8 +263,68 @@ class Parser:
                 self.prev()
 
 
-        return self.comparison()
+        return self.logical_or()
     
+
+    def if_statement(self):
+        self.eat()   # eat 'if'
+        condition = self.logical_or()
+
+        if not self.peek() or self.peek().type != THEN:
+            raise SyntaxError("Expected 'then'")
+        self.eat()   # eat 'then'
+
+        then_branch = self.statement()
+
+        
+        # handle else branch
+        else_branch = None
+        if self.peek() and self.peek().type == ELSE:
+            self.eat()
+            else_branch = self.statement()
+        
+        return IfNode(condition, then_branch, else_branch)  
+
+
+
+    # parse logical operators
+
+    def logical_or(self):
+        node = self.logical_and()
+        while True:
+            current = self.peek()
+            if current and current.type == OR:
+                self.eat()
+                right = self.logical_and()
+                node = BinOpNode(node, 'or', right)
+            else:
+                break
+        return node
+
+
+    def logical_and(self):
+        node = self.logical_not()
+        while True:
+            current = self.peek()
+            if current and current.type == AND:
+                self.eat()
+                right = self.logical_not()
+                node = BinOpNode(node, 'and', right)
+            else:
+                break
+        return node
+
+
+    def logical_not(self):
+        current = self.peek()
+        if current and current.type == NOT:
+            self.eat()
+            operand = self.logical_not()
+            return UnaryOpNode('not', operand)
+        else:
+            return self.comparison() 
+
+
     def comparison(self):
         node = self.expression()
         current = self.peek()
@@ -285,7 +392,7 @@ class Parser:
         # handle parentheses
         elif current.type == LPAREN:
             self.eat()  # eat '('
-            node = self.expression()
+            node = self.statement()
             if self.peek() is None or self.peek().type != RPAREN:
                 raise SyntaxError("Expected ')'")
             self.eat()
@@ -318,6 +425,10 @@ def evaluate(node):
             if right == 0:
                 raise ZeroDivisionError("Error! Cannot divide by zero")
             return left // right    
+        elif node.oper == 'and':
+            return bool(left) and bool(right)
+        elif node.oper == 'or':
+            return bool(left) or bool(right)
     
     elif isinstance(node, AssignNode):
         value = evaluate(node.value)
@@ -335,6 +446,8 @@ def evaluate(node):
             return +operand
         elif node.oper == '-':
             return -operand
+        elif node.oper == 'not':
+            return not bool(operand)
     
     elif isinstance(node, list):
         result = None
@@ -357,19 +470,30 @@ def evaluate(node):
             return left == right
         elif node.op == NE:
             return left != right
+    
+    elif isinstance(node, IfNode):
+        condition_value = evaluate(node.condition)
+        if condition_value:
+            return evaluate(node.then_branch)
+        elif node.else_branch is not None:
+            return evaluate(node.else_branch)
+        else:
+            return None
             
 
 
 
 if __name__ == "__main__":
-    expr = "2 < 3; x = 2;x > 4"
+    expr = "if 2 < 3 then 10 else 20"
+    expr = "if 5 < 3 then 10 else 20"
+    expr = "x = 2; if x > 3 then x * 10 else x + 1"
+
 
     tokens = tokenize(expr)
     parser = Parser(tokens)
     ast = parser.parse()
     result = evaluate(ast)
     print(result)
-    print(type(result))
 
 
 
