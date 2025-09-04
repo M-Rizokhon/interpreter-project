@@ -8,6 +8,10 @@ Handles variables and assignments
 
 Supports parentheses for grouping
 
+Supports if-else conditions
+
+Supports While Loops
+
 Designed to be easily extendable
 
 Current Status
